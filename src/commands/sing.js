@@ -1,6 +1,23 @@
 import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, entersState, VoiceConnectionStatus } from '@discordjs/voice';
 import { searchYoutube } from '../utils/youtube.js';
+import fs from 'fs';
 import * as playdl from 'play-dl';
+
+await playdl.setToken({
+  youtube: {
+    cookie: fs.readFileSync('./cookies.txt', 'utf8'),
+  }
+});
+
+if (fs.existsSync('./cookies.txt')) {
+  const cookie = fs.readFileSync('./cookies.txt', 'utf8').trim();
+  await playdl.setToken({
+    youtube: { cookie }
+  });
+  console.log('✅ YouTube Cookie 已加载');
+} else {
+  console.warn('⚠️ 没有找到 cookies.txt，可能会被 YouTube 拦截');
+}
 
 export async function handleSingCommand(message, artist) {
     const channel = message.member.voice.channel;
