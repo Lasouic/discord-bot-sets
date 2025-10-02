@@ -1,6 +1,21 @@
 {
   
   "dependencies": {
-    "discord.js": "^14.20.0"
+  
+    
+  "@discordjs/voice": "^0.19.0",
+  
+    
+  "discord.js": "^14.20.0",
+  
+    
+  "dotenv": "^17.2.3",
+  
+    
+  "yt-search": "^2.13.1",
+  
+    
+  "ytdl-core": "^4.11.5"
+  
   }
 }
