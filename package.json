@@ -17,5 +17,11 @@
     
   "ytdl-core": "^4.11.5"
   
+  },
+  
+  "scripts": {
+
+  "start": "node src/index.js"
+  
   }
 }
