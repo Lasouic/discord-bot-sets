@@ -3,12 +3,6 @@ import { searchYoutube } from '../utils/youtube.js';
 import fs from 'fs';
 import * as playdl from 'play-dl';
 
-await playdl.setToken({
-  youtube: {
-    cookie: fs.readFileSync('./cookies.txt', 'utf8'),
-  }
-});
-
 if (fs.existsSync('./cookies.txt')) {
   const cookie = fs.readFileSync('./cookies.txt', 'utf8').trim();
   await playdl.setToken({
@@ -32,6 +26,7 @@ export async function handleSingCommand(message, artist) {
         return;
     }
 
+    console.log("Now streaming:", video.url);
     const stream = await playdl.stream(video.url);
 
     const resource = createAudioResource(stream.stream, {
