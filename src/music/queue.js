@@ -7,8 +7,7 @@ import {
   VoiceConnectionStatus
 } from '@discordjs/voice';
 
-const queues = new Map(); // guildId -> { connection, channel, player, subscription, queue: [], nowPlaying, onIdleBound: false }
-
+const queues = new Map(); // guildId -> { connection, channel, player, subscription, queue: [], nowPlaying, trackSupplier }
 export function getGuildQueue(guildId) {
   if (!queues.has(guildId)) {
     queues.set(guildId, {
@@ -19,6 +18,7 @@ export function getGuildQueue(guildId) {
       queue: [],
       nowPlaying: null,
       onIdleBound: false,
+      trackSupplier: null,
     });
   }
   return queues.get(guildId);
@@ -63,12 +63,26 @@ export async function ensureConnection(guildQueue, guild, voiceChannel) {
 }
 
 // 当播放器空闲时尝试开始播放（若队列空则调用 getNextTrack 供应器补一首）
-export async function startIfIdle(guildQueue, fetchStream, onStart, onError, onFinish, getNextTrack) {
+export async function startIfIdle(
+  guildQueue,
+  fetchStream,
+  onStart,
+  onError,
+  onFinish,
+  getNextTrack
+) {
   if (guildQueue.player && guildQueue.player.state.status === AudioPlayerStatus.Playing) return;
   await playNext(guildQueue, fetchStream, onStart, onError, onFinish, getNextTrack);
 }
 
-export async function skip(guildQueue, fetchStream, onStart, onError, onFinish, getNextTrack) {
+export async function skip(
+  guildQueue,
+  fetchStream,
+  onStart,
+  onError,
+  onFinish,
+  getNextTrack
+) {
   // 立即停止当前并切下一首
   try { guildQueue.player?.stop?.(true); } catch {}
   return playNext(guildQueue, fetchStream, onStart, onError, onFinish, getNextTrack);
@@ -79,9 +93,14 @@ export function clearQueue(guildQueue) {
 }
 
 async function playNext(guildQueue, fetchStream, onStart, onError, onFinish, getNextTrack) {
+  if (typeof getNextTrack === 'function') {
+    guildQueue.trackSupplier = getNextTrack;
+  }
+
+  const supplier = typeof getNextTrack === 'function' ? getNextTrack : guildQueue.trackSupplier;
   // 队列空 → 让供应器补充
-  if (!guildQueue.queue.length && typeof getNextTrack === 'function') {
-    const refill = await getNextTrack().catch(() => null);
+  if (!guildQueue.queue.length && typeof supplier === 'function') {
+    const refill = await supplier().catch(() => null);
     if (refill) guildQueue.queue.push(refill);
   }
 
@@ -95,7 +114,7 @@ async function playNext(guildQueue, fetchStream, onStart, onError, onFinish, get
   guildQueue.nowPlaying = track;
 
   try {
-    const streamObj = await fetchStream(track.url, track.fallbackQuery);
+    const streamObj = await fetchStream(track);
 
     // ⭐ 关键：每首歌都重建全新的 AudioPlayer，并重新订阅到连接
     const newPlayer = createAudioPlayer();
@@ -114,16 +133,16 @@ async function playNext(guildQueue, fetchStream, onStart, onError, onFinish, get
 
     // 绑定一次性事件（绑定到 newPlayer，避免旧实例的事件干扰）
     newPlayer.once(AudioPlayerStatus.Idle, () => {
-      playNext(guildQueue, fetchStream, onStart, onError, onFinish, getNextTrack);
+      playNext(guildQueue, fetchStream, onStart, onError, onFinish, null);
     });
     newPlayer.on('error', (e) => {
       onError?.(e, guildQueue.nowPlaying);
-      playNext(guildQueue, fetchStream, onStart, onError, onFinish, getNextTrack);
+      playNext(guildQueue, fetchStream, onStart, onError, onFinish, null);
     });
 
   } catch (err) {
     onError?.(err, track);
     // 播放失败，尝试下一首
-    return playNext(guildQueue, fetchStream, onStart, onError, onFinish, getNextTrack);
+    return playNext(guildQueue, fetchStream, onStart, onError, onFinish, null);
   }
 }

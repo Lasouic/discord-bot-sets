@@ -63,9 +63,12 @@ async function getRandomTrackForArtist(artist, excludeIds = new Set()) {
 }
 
 // ======== 拉流（YT → SC 回退）========
-async function fetchStream(urlOrYtUrl, fallbackQuery) {
+async function fetchStream(track) {
+  if (!track?.url) {
+    throw new Error('无效的曲目 URL');
+  }
   try {
-    return await playdl.stream(urlOrYtUrl);
+    return await playdl.stream(track.url);
   } catch (err) {
     const combined = String(err?.message || err || '');
     const needVerify = /not a bot|confirm you.?re not a bot|captcha|consent|429|410/i.test(combined);
@@ -73,9 +76,20 @@ async function fetchStream(urlOrYtUrl, fallbackQuery) {
 
     if (!scClientId) throw new Error('YouTube 要求验证且未配置 SoundCloud client_id');
 
-    const sc = await playdl.search(fallbackQuery, { source: { soundcloud: 'tracks' }, limit: 1 });
-    if (!sc?.[0]?.url) throw new Error('回退 SoundCloud 未找到可用音源');
-    return await playdl.stream(sc[0].url);
+    if (!track.fallbackQuery) throw new Error('回退 SoundCloud 缺少搜索关键词');
+
+    const scResults = await playdl.search(track.fallbackQuery, {
+      source: { soundcloud: 'tracks' },
+      limit: 10,
+    });
+
+    const candidates = (scResults || []).filter(item => item?.url);
+    if (!candidates.length) throw new Error('回退 SoundCloud 未找到可用音源');
+
+    const pick = candidates[Math.floor(Math.random() * candidates.length)];
+    track.title = pick?.title || pick?.name || track.title;
+    track.url = pick.url;
+    return await playdl.stream(pick.url);
   }
 }
 
@@ -135,6 +149,8 @@ export async function handleSingCommand(message, artist) {
     return next;
   };
 
+  guildQueue.trackSupplier = getNextTrack;
+
   await startIfIdle(
     guildQueue,
     fetchStream,
@@ -157,12 +173,13 @@ export async function handleAnotherCommand(message) {
   }
 
   const recent = getRecentSet(message.guild.id, nowArtist);
+  const next = await getRandomTrackForArtist(nowArtist, recent.ids);
+  if (!next) {
+    return void message.reply(`😢 没找到和 **${nowArtist}** 相关的新歌可以切换`);
+  }
 
-  const getNextTrack = async () => {
-    const next = await getRandomTrackForArtist(nowArtist, recent.ids);
-    if (next) rememberPlayed(message.guild.id, nowArtist, next.id);
-    return next;
-  };
+  rememberPlayed(message.guild.id, nowArtist, next.id);
+  guildQueue.queue.push(next);
 
   await skipQueue(
     guildQueue,
@@ -173,7 +190,7 @@ export async function handleAnotherCommand(message) {
       message.channel.send(`⚠️ **${track?.title ?? '未知曲目'}** 播放失败，尝试下一首…`);
     },
     () => message.channel.send('✅ 电台播放结束（或已停止）。'),
-    getNextTrack
+    null
   );
 }
 
@@ -192,7 +209,7 @@ export async function handleSkipCommand(message) {
       message.channel.send(`⚠️ **${track?.title ?? '未知曲目'}** 播放失败，尝试下一首…`);
     },
     () => message.channel.send('✅ 电台播放结束（或已停止）。'),
-    async () => null // 传统队列模式下可不补；电台下由 handleAnother/handleSing 传入
+    null
   );
 }
 
