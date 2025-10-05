@@ -1,16 +1,16 @@
-import ytSearch from 'yt-search';
+import * as playdl from 'play-dl';
 
-export async function searchYoutube(artist) {
-    const result = await ytSearch(`${artist} song`);
-    const videos = result.videos.filter(v => v.seconds < 600);
-    if (!videos || videos.length === 0) return null;
-    const random = Math.floor(Math.random() * videos.length);
-    const video = videos[random];
+export async function searchYoutube(query) {
+    const results = await playdl.search(`${query} audio`, {
+    source: { youtube: 'video' },
+    limit: 5
+  });
 
-    console.log("Picked video:", video);
+  const pick = results.find(r => r.type === 'video') || results[0];
+  if (!pick) return null;
 
-    return {
-        title: video.title,
-        url: video.url // 确保这里返回 url
-    };
+  return {
+    title: pick.title,
+    url: pick.url
+  };
 }
