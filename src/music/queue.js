@@ -18,7 +18,7 @@ export function getGuildQueue(guildId) {
       queue: [],
       nowPlaying: null,
       onIdleBound: false,
-      trackSupplier: null,
+      trackSupplier: undefined,
     });
   }
   return queues.get(guildId);
@@ -27,6 +27,9 @@ export function getGuildQueue(guildId) {
 export function destroyGuildQueue(guildId) {
   const q = queues.get(guildId);
   if (!q) return;
+  q.trackSupplier = null;
+  q.nowPlaying = null;
+  q.queue.length = 0;
   try {
     q.subscription?.unsubscribe?.();
   } catch {}
@@ -38,6 +41,10 @@ export function destroyGuildQueue(guildId) {
       q.connection.destroy();
     }
   } catch {}
+  q.connection = null;
+  q.player = null;
+  q.subscription = null;
+  q.channel = null;
   queues.delete(guildId);
 }
 
@@ -97,7 +104,14 @@ async function playNext(guildQueue, fetchStream, onStart, onError, onFinish, get
     guildQueue.trackSupplier = getNextTrack;
   }
 
+  if (!guildQueue.connection || guildQueue.connection.state.status === VoiceConnectionStatus.Destroyed) {
+    return;
+  }
+
   const supplier = typeof getNextTrack === 'function' ? getNextTrack : guildQueue.trackSupplier;
+  if (!guildQueue.queue.length && guildQueue.trackSupplier === null && typeof supplier !== 'function') {
+    return;
+  }
   // 队列空 → 让供应器补充
   if (!guildQueue.queue.length && typeof supplier === 'function') {
     const refill = await supplier().catch(() => null);
@@ -111,10 +125,10 @@ async function playNext(guildQueue, fetchStream, onStart, onError, onFinish, get
   }
 
   const track = guildQueue.queue.shift();
-  guildQueue.nowPlaying = track;
 
   try {
     const streamObj = await fetchStream(track);
+    guildQueue.nowPlaying = track;
 
     // ⭐ 关键：每首歌都重建全新的 AudioPlayer，并重新订阅到连接
     const newPlayer = createAudioPlayer();
@@ -126,10 +140,10 @@ async function playNext(guildQueue, fetchStream, onStart, onError, onFinish, get
     try { oldSub?.unsubscribe?.(); } catch {}
     try { oldPlayer?.stop?.(true); } catch {}
 
-    console.log('[PLAY]', track.title, '|', track.url);
+    console.log('[PLAY]', guildQueue.nowPlaying.title, '|', guildQueue.nowPlaying.url);
     const resource = createAudioResource(streamObj.stream, { inputType: streamObj.type });
     newPlayer.play(resource);
-    onStart?.(track);
+    onStart?.(guildQueue.nowPlaying);
 
     // 绑定一次性事件（绑定到 newPlayer，避免旧实例的事件干扰）
     newPlayer.once(AudioPlayerStatus.Idle, () => {

@@ -64,7 +64,10 @@ async function getRandomTrackForArtist(artist, excludeIds = new Set()) {
 
 // ======== 拉流（YT → SC 回退）========
 async function fetchStream(track) {
-  if (!track?.url) {
+  if (!track || typeof track !== 'object') {
+    throw new Error('无效的曲目对象');
+  }
+  if (!track.url) {
     throw new Error('无效的曲目 URL');
   }
   try {
@@ -87,9 +90,17 @@ async function fetchStream(track) {
     if (!candidates.length) throw new Error('回退 SoundCloud 未找到可用音源');
 
     const pick = candidates[Math.floor(Math.random() * candidates.length)];
-    track.title = pick?.title || pick?.name || track.title;
+    const scTitle = pick?.title || pick?.name;
+    if (scTitle) track.title = scTitle;
     track.url = pick.url;
-    return await playdl.stream(pick.url);
+    if (pick?.id) track.id = pick.id;
+    if (pick?.durationInSec) track.duration = pick.durationInSec;
+    if (pick?.user?.name) track.artist = pick.user.name;
+    if (pick?.thumbnail || pick?.image || pick?.artworkUrl) {
+      track.thumbnail = pick.thumbnail || pick.image || pick.artworkUrl;
+    }
+    track.source = 'soundcloud';
+    return await playdl.stream(track.url);
   }
 }
 
@@ -217,6 +228,8 @@ export async function handleStopCommand(message) {
   const q = getGuildQueue(message.guild.id);
   if (!q) return void message.reply('👌 已停止（无连接）。');
   clearQueue(q);
+  q.trackSupplier = null;
+  q.nowPlaying = null;
   try {
     if (q.connection && q.connection.state.status !== VoiceConnectionStatus.Destroyed) {
       q.connection.destroy();
