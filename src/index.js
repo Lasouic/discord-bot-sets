@@ -1,12 +1,7 @@
 import 'dotenv/config';
 import { Client, GatewayIntentBits, Events } from 'discord.js';
-import {
-  handleSingCommand,
-  handleAnotherCommand,
-  handleSkipCommand,
-  handleStopCommand,
-  handleQueueCommand
-} from './commands/sing.js';
+import { getCommand, listCommands } from './commands/index.js';
+import { parseCommand } from './utils/commandParser.js';
 
 const token = process.env.DISCORD_BOT_TOKEN;
 if (!token) throw new Error('Missing DISCORD_BOT_TOKEN. Put it in .env or environment.');
@@ -27,35 +22,32 @@ client.once(Events.ClientReady, (c) => {
 client.on(Events.MessageCreate, async (message) => {
   try {
     if (message.author.bot || !message.guild) return;
-    const content = (message.content ?? '').trim();
+    const parsed = parseCommand(message.content ?? '');
+    if (!parsed) return;
 
-    if (content.startsWith('!sing ') || content.startsWith('/sing ')) {
-      const query = content.replace(/^(!|\/)sing\s+/i, '');
-      if (!query) return message.reply('用法：`!sing 歌手`');
-      return handleSingCommand(message, query);
+    const command = getCommand(parsed.name);
+    if (!command) {
+      if (parsed.name === 'help') {
+        const lines = listCommands()
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((cmd) => `• **${cmd.usage}** — ${cmd.description}`);
+        await message.reply(
+          '📚 可用指令：\n' + lines.join('\n') + '\n📝 更多指令敬请期待！'
+        );
+      }
+      return;
     }
 
-    if (content === '!another' || content === '/another') {
-      return handleAnotherCommand(message);
-    }
-
-    if (content === '!skip' || content === '/skip') {
-      return handleSkipCommand(message);
-    }
-
-    if (content === '!stop' || content === '/stop') {
-      return handleStopCommand(message);
-    }
-
-    if (content === '!queue' || content === '/queue') {
-      return handleQueueCommand(message);
-    }
-
-    if (content === '!ping') {
-      return message.reply('pong');
-    }
+    await command.run(message, parsed.args);
   } catch (err) {
     console.error('messageCreate handler error:', err);
+    if (message?.channel) {
+      try {
+        await message.reply('😵 机器人刚刚绊了一下脚，请稍后再试。');
+      } catch (replyError) {
+        console.error('failed to send fallback reply:', replyError);
+      }
+    }
   }
 });
 

@@ -1,0 +1,52 @@
+import fs from 'fs';
+import * as playdl from 'play-dl';
+
+const COOKIE_PATH = './cookies.txt';
+const DEFAULT_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
+
+let initPromise;
+
+async function configureTokens() {
+  const tokens = {
+    useragent: DEFAULT_USER_AGENT,
+  };
+
+  if (fs.existsSync(COOKIE_PATH)) {
+    const cookie = fs.readFileSync(COOKIE_PATH, 'utf8').trim();
+    if (cookie) {
+      tokens.youtube = { cookie };
+      console.log('✅ YouTube Cookie 已加载');
+    }
+  } else {
+    console.warn('⚠️ 没有找到 cookies.txt，可能会被 YouTube 拦截');
+  }
+
+  let scClientId = process.env.SOUNDCLOUD_CLIENT_ID;
+
+  if (!scClientId) {
+    try {
+      scClientId = await playdl.getFreeClientID();
+    } catch (error) {
+      console.warn('⚠️ 获取 SoundCloud client_id 失败，将无法使用 SoundCloud 回退：', error?.message || error);
+    }
+  }
+
+  if (scClientId) {
+    tokens.soundcloud = { client_id: scClientId };
+    console.log('✅ SoundCloud client_id 已配置');
+  } else {
+    console.warn('⚠️ 未获取到 SoundCloud client_id，将无法使用 SoundCloud 回退');
+  }
+
+  await playdl.setToken(tokens);
+
+  return { scClientId, tokens };
+}
+
+export function getPlaybackTokens() {
+  if (!initPromise) {
+    initPromise = configureTokens();
+  }
+  return initPromise;
+}
