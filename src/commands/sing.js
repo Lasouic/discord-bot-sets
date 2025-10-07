@@ -1,6 +1,4 @@
-import fs from 'fs';
 import * as playdl from 'play-dl';
-import yts from 'yt-search';
 import {
   getGuildQueue,
   ensureConnection,
@@ -10,12 +8,11 @@ import {
   destroyGuildQueue,
 } from '../music/queue.js';
 import { VoiceConnectionStatus } from '@discordjs/voice';
-
-// ======== Token / Cookie / User-Agent / SoundCloud client_id 初始化 ========
 import { getPlaybackTokens } from '../music/playbackTokens.js';
 
 const MIN_TRACK_SECONDS = 60;
 const RADIO_RECENT_LIMIT = 12;
+const NEGATIVE = /\b(live|cover|remix|remastered|sped\s*up|slowed|nightcore|8d|8\-?d|short|tiktok|舞台|现场)\b/i;
 
 const friendlyReplies = {
   joinVoice: '❌ 先加入语音频道，我们马上就播歌给你听~',
@@ -30,36 +27,40 @@ const { scClientId } = await getPlaybackTokens();
 
 const recentByGuild = new Map(); // guildId -> { artist: string, ids: Set<string>, max: number }
 
-function filterPlayableVideos(videos, excludeIds) {
-  return (videos ?? []).filter(
-    (video) =>
-      video.videoId &&
-      !excludeIds.has(video.videoId) &&
-      video.url &&
-      video.title &&
-      (video.seconds ?? 0) >= MIN_TRACK_SECONDS
-  );
+function filterSC(tracks, excludeIds) {
+  return (tracks ?? []).filter((t) => {
+    const id = t?.id ?? t?.permalink;
+    const title = t?.title || t?.name;
+    const url = t?.url;
+    const dur = t?.durationInSec ?? 0;
+    if (!id || !title || !url) return false;
+    if (excludeIds.has(String(id))) return false;
+    if (dur < MIN_TRACK_SECONDS) return false;
+    if (NEGATIVE.test(String(title))) return false;
+    return true;
+  });
 }
 
 async function getRandomTrackForArtist(artist, excludeIds = new Set()) {
-  const primary = await yts(artist);
-  let candidates = filterPlayableVideos(primary?.videos, excludeIds);
-
-  if (candidates.length < 5) {
-    const secondary = await yts(`${artist} audio OR lyrics`);
-    const more = filterPlayableVideos(secondary?.videos, excludeIds);
-    const seen = new Set(candidates.map((video) => video.videoId));
-    for (const video of more) {
-      if (!seen.has(video.videoId)) {
-        candidates.push(video);
-      }
-    }
+  const queries = [artist, `${artist} audio`];
+  let pool = [];
+  for (const q of queries) {
+    const res = await playdl.search(q, { source: { soundcloud: 'tracks' }, limit: 30 }).catch(() => []);
+    pool = pool.concat(filterSC(res, excludeIds));
+    if (pool.length >= 10) break;
   }
-
-  if (!candidates.length) return null;
-
-  const pick = candidates[Math.floor(Math.random() * candidates.length)];
-  return { id: pick.videoId, title: pick.title, url: pick.url, fallbackQuery: artist };
+  if (!pool.length) return null;
+  const pick = pool[Math.floor(Math.random() * pool.length)];
+  return {
+    id: pick?.id ?? pick?.permalink ?? pick?.url,
+    title: pick?.title || pick?.name,
+    url: pick?.url,
+    duration: pick?.durationInSec,
+    artist: pick?.user?.name,
+    thumbnail: pick?.thumbnail || pick?.image || pick?.artworkUrl,
+    source: 'soundcloud',
+    fallbackQuery: artist,
+  };
 }
 
 async function fetchStream(track) {
@@ -70,39 +71,7 @@ async function fetchStream(track) {
     throw new Error('无效的曲目 URL');
   }
 
-  try {
-    return await playdl.stream(track.url);
-  } catch (error) {
-    const message = String(error?.message ?? error ?? '');
-    const needVerify = /not a bot|confirm you.?re not a bot|captcha|consent|429|410/i.test(message);
-    if (!needVerify) throw error;
-
-    if (!scClientId) {
-      throw new Error('YouTube 要求验证且未配置 SoundCloud client_id');
-    }
-    if (!track.fallbackQuery) {
-      throw new Error('回退 SoundCloud 缺少搜索关键词');
-    }
-
-    const scResults = await playdl.search(track.fallbackQuery, {
-      source: { soundcloud: 'tracks' },
-      limit: 10,
-    });
-
-    const candidates = (scResults || []).filter(item => item?.url);
-    if (!candidates.length) throw new Error('回退 SoundCloud 未找到可用音源');
-
-    const pick = candidates[Math.floor(Math.random() * candidates.length)];
-    track.title = pick?.title || pick?.name || track.title;
-    track.url = pick.url;
-    track.id = pick?.id ?? track.id;
-    track.duration = pick?.durationInSec ?? track.duration;
-    track.artist = pick?.user?.name ?? track.artist;
-    track.thumbnail = pick?.thumbnail || pick?.image || pick?.artworkUrl || track.thumbnail;
-    track.source = 'soundcloud';
-
-    return await playdl.stream(track.url);
-  }
+  return await playdl.stream(track.url);
 }
 
 function getRecentSet(guildId, artist) {
@@ -117,7 +86,7 @@ function getRecentSet(guildId, artist) {
 function rememberPlayed(guildId, artist, id) {
   if (!id) return;
   const record = getRecentSet(guildId, artist);
-  record.ids.add(id);
+  record.ids.add(String(id));
   if (record.ids.size > record.max) {
     const first = record.ids.values().next().value;
     record.ids.delete(first);

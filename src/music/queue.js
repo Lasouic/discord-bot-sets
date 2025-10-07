@@ -92,7 +92,7 @@ export async function skip(
 ) {
   // 立即停止当前并切下一首
   try { guildQueue.player?.stop?.(true); } catch {}
-  return playNext(guildQueue, fetchStream, onStart, onError, onFinish, getNextTrack);
+  return;
 }
 
 export function clearQueue(guildQueue) {
@@ -112,7 +112,7 @@ async function playNext(guildQueue, fetchStream, onStart, onError, onFinish, get
   if (!guildQueue.queue.length && guildQueue.trackSupplier === null && typeof supplier !== 'function') {
     return;
   }
-  // 队列空 → 让供应器补充
+
   if (!guildQueue.queue.length && typeof supplier === 'function') {
     const refill = await supplier().catch(() => null);
     if (refill) guildQueue.queue.push(refill);
@@ -130,7 +130,6 @@ async function playNext(guildQueue, fetchStream, onStart, onError, onFinish, get
     const streamObj = await fetchStream(track);
     guildQueue.nowPlaying = track;
 
-    // ⭐ 关键：每首歌都重建全新的 AudioPlayer，并重新订阅到连接
     const newPlayer = createAudioPlayer();
     const oldSub = guildQueue.subscription;
     const oldPlayer = guildQueue.player;
